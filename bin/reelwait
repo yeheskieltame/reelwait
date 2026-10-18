@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+# reelwait: buka panel reels di tmux selama Claude Code mikir lama.
+# ponytail: ditulis kompatibel bash 3.2 (bawaan macOS), jadi tidak perlu brew bash.
+set -u
+
+src=$0
+while [ -L "$src" ]; do
+  t=$(readlink "$src")
+  case $t in /*) src=$t ;; *) src=$(dirname "$src")/$t ;; esac
+done
+ROOT=$(cd -P "$(dirname "$src")/.." && pwd)
+SELF=$ROOT/bin/reelwait
+CONF_DIR=${REELWAIT_CONF:-${XDG_CONFIG_HOME:-$HOME/.config}/reelwait}
+CACHE=${REELWAIT_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/reelwait}
+VIDEOS=$CACHE/videos
+STATE_ROOT=$CACHE/state
+mkdir -p "$VIDEOS" "$STATE_ROOT"
+
+. "$ROOT/config/default.conf"
+[ -f "$CONF_DIR/config" ] && . "$CONF_DIR/config"
+for f in render tmux player fetch stats; do . "$ROOT/lib/$f.sh"; done
+
+die() { echo "reelwait: $*" >&2; exit 1; }
+in_tmux() { [ -n "${TMUX:-}" ] && [ -n "${TMUX_PANE:-}" ]; }
+
+usage() {
+  cat <<'EOF'
+reelwait - dumb scrolling selama Claude Code mikir
+
+  start [--delay N]     timer background, buka panel setelah N detik (dipakai hook)
+  stop                  batalkan timer + tutup panel (dipakai hook)
+  toggle                buka/tutup panel manual
+  next|prev|mute|pause  kontrol player tanpa pindah fokus
+  limit --until HH:MM   nonton dengan countdown, auto tutup di jam itu
+  fetch                 download reels ke cache
+  play                  nonton di terminal ini (tanpa tmux)
+  stats                 jumlah reels hari ini
+  doctor                cek dependency & setup
+EOF
+}
+
+doctor() {
+  local c ok=0
+  for c in tmux mpv yt-dlp socat jq; do
+    if command -v "$c" >/dev/null; then echo "ok    $c"; else echo "MISS  $c"; ok=1; fi
+  done
+  if [ "$(pick_mode)" = window ]; then
+    echo "info  mode: window (jendela mengambang $WINDOW, tidak butuh tmux)"
+  else
+    echo "info  mode: pane, video output: $(pick_vo)"
+    if [ -z "${TMUX:-}" ]; then
+      echo "warn  tidak di dalam tmux: mode pane cuma jalan kalau Claude dibuka di tmux"
+    elif [ "$(tmux show -gv allow-passthrough 2>/dev/null)" = off ]; then
+      echo "info  video tajam (kitty) di tmux butuh: set -g allow-passthrough on"
+    fi
+  fi
+  case $ROOT in
+    */.claude/plugins/*) echo "ok    hooks Claude Code (plugin)" ;;
+    *) if grep -q reelwait "$HOME/.claude/settings.json" 2>/dev/null; then echo "ok    hooks Claude Code"; else echo "MISS  hooks Claude Code (pasang plugin atau jalankan install.sh)"; ok=1; fi ;;
+  esac
+  if grep -q '>>> reelwait >>>' "$HOME/.tmux.conf" 2>/dev/null; then echo "ok    keybind tmux"; else echo "info  keybind tmux tidak terpasang (opsional, jalankan install.sh)"; fi
+  echo "info  cache: $(ls "$VIDEOS" | wc -l | tr -d ' ') video di $VIDEOS"
+  return $ok
+}
+
+cmd=${1:-help}
+[ $# -gt 0 ] && shift
+case $cmd in
+  # Hook commands: selalu exit 0 dan tidak pernah print ke stdout.
+  start)
+    delay=$DELAY
+    [ "${1:-}" = --delay ] && delay=${2:-$DELAY}
+    if [ "$(pick_mode)" = window ] || in_tmux; then start_timer "$(session_key)" "$delay" 2>/dev/null; fi
+    exit 0 ;;
+  stop)
+    stop_session "$(state_dir "$(session_key)")" 2>/dev/null
+    exit 0 ;;
+  toggle) toggle ;;
+  next) ipc playlist-next ;;
+  prev) ipc playlist-prev ;;
+  mute) ipc cycle mute ;;
+  pause) ipc cycle pause ;;
+  limit)
+    [ "${1:-}" = --until ] || die "pakai: reelwait limit --until HH:MM"
+    t=$(until_epoch "${2:-}") || die "jam tidak valid: ${2:-} (format HH:MM)"
+    if [ "$(pick_mode)" = window ] || in_tmux; then
+      k=$(session_key)
+      d=$(state_dir "$k")
+      stop_session "$d"
+      mkdir -p "$d" && date +%s > "$d/started"
+      open_player "$k" "$t"
+    else
+      mkdir -p "$STATE_ROOT/standalone"
+      player_run "$STATE_ROOT/standalone" "$t"
+      finish "$STATE_ROOT/standalone"
+    fi ;;
+  fetch) fetch_all ;;
+  warm) # hook SessionStart: refresh cache di background, paling sering sekali sehari
+    if [ -z "$(find "$CACHE/last-fetch" -mtime -1 2>/dev/null)" ]; then
+      nohup "$SELF" fetch >/dev/null 2>&1 </dev/null &
+    fi
+    exit 0 ;;
+  play)
+    mkdir -p "$STATE_ROOT/standalone"
+    player_run "$STATE_ROOT/standalone"
+    finish "$STATE_ROOT/standalone" ;;
+  stats) show_stats ;;
+  doctor) doctor ;;
+  # Internal: badan timer, dan proses player (di pane reels atau di balik jendela).
+  _open) sleep "$2"; open_player "$1" ;;
+  _player)
+    [ -d "$1" ] || exit 0 # sesi sudah di-stop sebelum player sempat jalan
+    player_run "$1" "${2:-}"
+    finish "$1" ;;
+  *) usage ;;
+esac

@@ -1,0 +1,12 @@
+{
+  "name": "reelwait",
+  "description": "Dumb-scroll short videos while Claude Code works.",
+  "owner": { "name": "Yeheskiel Yunus Tame" },
+  "plugins": [
+    {
+      "name": "reelwait",
+      "source": "./",
+      "description": "Floating reels window while Claude Code thinks; closes when Claude is done."
+    }
+  ]
+}

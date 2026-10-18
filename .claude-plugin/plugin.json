@@ -1,0 +1,10 @@
+{
+  "name": "reelwait",
+  "version": "0.1.0",
+  "description": "Pops up a small floating short-video window while Claude Code is thinking, and closes it the moment Claude finishes or needs your input.",
+  "author": { "name": "Yeheskiel Yunus Tame", "url": "https://github.com/yeheskieltame" },
+  "homepage": "https://github.com/yeheskieltame/reelwait",
+  "repository": "https://github.com/yeheskieltame/reelwait",
+  "license": "MIT",
+  "keywords": ["reels", "shorts", "mpv", "hooks", "waiting", "fun"]
+}
